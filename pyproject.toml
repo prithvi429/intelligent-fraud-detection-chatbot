@@ -1,7 +1,104 @@
-[tool.poetry]
-name = "intelligent-fraud-detection-chatbot"
-version = "0.1.0"
-
+# =========================================================
+# 🧱 Build System
+# =========================================================
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
+
+# =========================================================
+# 🎨 Black - Code Formatter
+# =========================================================
+[tool.black]
+line-length = 88
+target-version = ['py310']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+  | migrations
+  | data
+)/
+'''
+
+# =========================================================
+# 🔀 isort - Import Sorting (Black compatible)
+# =========================================================
+[tool.isort]
+profile = "black"
+line_length = 88
+known_first_party = ["src", "chatbot", "ml"]
+multi_line_output = 3
+include_trailing_comma = true
+use_parentheses = true
+skip_gitignore = true
+
+# =========================================================
+# 🧹 Flake8 - Linting Rules
+# =========================================================
+[tool.flake8]
+max-line-length = 88
+extend-ignore = ["E203", "W503"]
+exclude = [".git", "__pycache__", "build", "dist", "venv"]
+
+# =========================================================
+# 🧠 Mypy - Type Checking
+# =========================================================
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+no_implicit_optional = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+
+# =========================================================
+# 🧪 Pytest - Testing Configuration
+# =========================================================
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --tb=short"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# =========================================================
+# 📦 Coverage - Code Coverage Settings
+# =========================================================
+[tool.coverage.run]
+source = ["src"]
+branch = true
+omit = [
+    "tests/*",
+    "*/__init__.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 70
+
+# =========================================================
+# 🧾 Metadata (Optional for modern packaging)
+# =========================================================
+[project]
+name = "insurance-fraud-chatbot"
+version = "0.1.0"
+description = "AI-powered chatbot for detecting fraudulent insurance claims using rules, ML, and GPT integration."
+authors = [
+    { name = "Pruthviraj Rathod", email = "prithvirathod29884@gmail.com" }
+]
+requires-python = ">=3.10"
+license = { text = "MIT" }
+readme = "README.md"
+dependencies = []

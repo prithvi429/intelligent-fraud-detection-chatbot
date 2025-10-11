@@ -1,30 +1,126 @@
-version: '3.8'
+version: '3.9'
+
+# =========================================================
+# 🧩 Fraud Detection Chatbot - Local Dev Environment
+# =========================================================
 services:
-  api:
-    build: .
-    ports:
-      - "8000:8000"
-    environment:
-      - DB_URL=postgresql://user:pass@db:5432/frauddb
-    depends_on:
-      - db
+  # =========================================================
+  # 🗄️ Postgres DB (claims, blacklist, fraud history)
+  # =========================================================
   db:
-    image: postgres:13
+    image: postgres:15-alpine
+    container_name: fraud-chatbot-db
+    restart: always
     environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: pass
-      POSTGRES_DB: frauddb
+      POSTGRES_DB: fraud_chatbot_db
+      POSTGRES_USER: username
+      POSTGRES_PASSWORD: password
     ports:
       - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/scripts/seed_db.sql:/docker-entrypoint-initdb.d/seed.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U username -d fraud_chatbot_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # =========================================================
+  # 🔴 Redis Cache (embeddings, geocode, session cache)
+  # =========================================================
   redis:
-    image: redis:6
+    image: redis:7-alpine
+    container_name: fraud-chatbot-redis
+    restart: always
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # =========================================================
+  # 💾 MinIO (S3-compatible artifact store)
+  # =========================================================
   minio:
-    image: minio/minio
-    command: server /data
+    image: minio/minio:latest
+    container_name: fraud-chatbot-minio
+    restart: always
     environment:
-      MINIO_ROOT_USER: minio
-      MINIO_ROOT_PASSWORD: minio123
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      - "9000:9000"
+      - "9000:9000"  # API
+      - "9001:9001"  # Console
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # =========================================================
+  # 🚀 FastAPI Backend (Fraud Detection API + Chatbot)
+  # =========================================================
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev  # use 'prod' for production builds
+    container_name: fraud-chatbot-api
+    restart: on-failure
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      # Core connections
+      DB_URL: postgresql://username:password@db:5432/fraud_chatbot_db
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+
+      # AI & App Config
+      DEBUG: "True"
+      LOG_LEVEL: INFO
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-test-key}
+      PINECONE_API_KEY: ${PINECONE_API_KEY:-test-key}
+      PINECONE_INDEX_NAME: fraud-policies-index
+      ML_FRAUD_THRESHOLD: 0.7
+
+    ports:
+      - "8000:8000"
+
+    volumes:
+      - .:/app  # Hot reload for dev
+
+    command: >
+      uvicorn src.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+
+# =========================================================
+# 🧱 Persistent Volumes
+# =========================================================
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+
+# =========================================================
+# 🌐 Optional Explicit Network (for future AWS compatibility)
+# =========================================================
+networks:
+  default:
+    name: fraud-chatbot-network
