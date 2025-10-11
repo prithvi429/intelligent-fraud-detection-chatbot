@@ -1,0 +1,12 @@
+name: ML Retrain
+on:
+  schedule:
+    - cron: '0 3 * * 1' # weekly
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Retrain model (stub)
+        run: echo "Retrain ML model - implement training pipeline"

@@ -1,0 +1,6 @@
+pytest
+pytest-mock
+black
+flake8
+coverage
+pre-commit

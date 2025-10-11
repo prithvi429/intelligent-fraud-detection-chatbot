@@ -1,0 +1,11 @@
+name: CD-Prod
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-prod:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Deploy to Prod (stub)
+        run: echo "Deploy to prod - implement steps"

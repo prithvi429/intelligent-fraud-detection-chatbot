@@ -1,0 +1,52 @@
+# =========================================================
+# ✅ CORE BACKEND (FastAPI + DB + AWS SDK)
+# =========================================================
+fastapi==0.103.2
+uvicorn==0.23.2
+pydantic==1.10.13
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9     # PostgreSQL connection
+boto3>=1.28.0               # AWS SDK (leave flexible for Lambda runtime)
+python-dotenv==1.0.0        # For environment variables (.env)
+
+# =========================================================
+# ⚙️ FRAUD ENGINE & MACHINE LEARNING
+# =========================================================
+scikit-learn==1.3.2         # ML model (fraud scoring)
+joblib==1.3.2               # Save/load trained models
+pandas==2.1.4
+numpy==1.24.4
+geopy==2.4.1                # Location mismatch checks
+spacy==3.7.2                # NLP engine (keyword/entity extraction)
+sentence-transformers==2.2.2 # For text similarity (duplicate/suspicious claim detection)
+
+# =========================================================
+# 💬 CHATBOT & LLM INTEGRATION
+# =========================================================
+langchain==0.1.17
+langchain-openai==0.1.3
+openai==1.12.0
+tiktoken==0.6.0
+# =========================================================
+# 🧠 VECTOR DATABASE (PINECONE)
+# =========================================================
+pinecone-client==3.0.0      # Pinecone vector DB SDK
+# Optional if AWS-only:
+# opensearch-py==2.4.2      # Alternative: AWS OpenSearch for vector search
+
+# =========================================================
+# 🔧 UTILITIES & SUPPORT
+# =========================================================
+requests==2.31.0
+python-multipart==0.0.6     # For file uploads (invoices, docs)
+regex==2023.10.3            # For advanced text pattern matching
+
+# =========================================================
+# 🧪 DEVELOPMENT & TESTING (install separately)
+# =========================================================
+# pytest==7.4.3
+# pytest-mock==3.12.1
+# black==23.11.0
+# flake8==6.1.0
+# coverage==7.3.2
+# pre-commit==3.6.0
