@@ -1,1 +1,15 @@
-# dev vars
+environment          = "dev"
+aws_region           = "us-east-1"
+s3_bucket_name       = "fraud-chatbot-artifacts-dev"
+lambda_zip_s3_key    = "fraud_api_dev.zip"
+chatbot_zip_s3_key   = "chatbot_handler_dev.zip"
+model_s3_key         = "model_dev.tar.gz"
+db_username          = "postgres"
+db_password          = "devpassword123"  # Change in prod
+db_instance_class    = "db.t3.micro"
+sagemaker_instance_type = "ml.t3.medium"
+
+tags = {
+  Environment = "dev"
+  BillingCode = "dev-fraud"
+}

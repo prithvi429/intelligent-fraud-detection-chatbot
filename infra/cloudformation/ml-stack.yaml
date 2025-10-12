@@ -1,1 +1,145 @@
-# ml stack
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Fraud ML Stack
+  Deploys SageMaker Model + Endpoint for Fraud Detection Inference
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+    Description: Deployment environment name
+
+  ModelS3Bucket:
+    Type: String
+    Description: S3 bucket where model.tar.gz is stored
+
+  ModelS3Key:
+    Type: String
+    Description: S3 key for model.tar.gz file (uploaded by train_and_deploy_ml.py)
+
+  InstanceType:
+    Type: String
+    Default: ml.t3.medium
+    AllowedValues:
+      - ml.t3.medium
+      - ml.m5.large
+      - ml.c5.xlarge
+    Description: EC2 instance type for SageMaker Endpoint
+
+  CustomImageUri:
+    Type: String
+    Default: ''
+    Description: Optional custom ECR image URI (if using custom inference container)
+
+Resources:
+  ##################################################
+  # SageMaker Execution Role
+  ##################################################
+  SageMakerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'fraud-sagemaker-${Environment}-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sagemaker.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+      Policies:
+        - PolicyName: !Sub 'fraud-sagemaker-${Environment}-access'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::${ModelS3Bucket}'
+                  - !Sub 'arn:aws:s3:::${ModelS3Bucket}/*'
+      Tags:
+        - Key: Project
+          Value: FraudDetection
+        - Key: Environment
+          Value: !Ref Environment
+
+  ##################################################
+  # SageMaker Model
+  ##################################################
+  FraudModel:
+    Type: AWS::SageMaker::Model
+    DeletionPolicy: Retain
+    Properties:
+      ModelName: !Sub 'fraud-model-${Environment}'
+      PrimaryContainer:
+        Image: !If
+          - HasCustomImage
+          - !Ref CustomImageUri
+          - !Sub '683313688378.dkr.ecr.${AWS::Region}.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3'
+        ModelDataUrl: !Sub 's3://${ModelS3Bucket}/${ModelS3Key}'
+      ExecutionRoleArn: !GetAtt SageMakerExecutionRole.Arn
+      Tags:
+        - Key: Project
+          Value: FraudDetection
+        - Key: Environment
+          Value: !Ref Environment
+    Conditions:
+      HasCustomImage: !Not [!Equals [!Ref CustomImageUri, ""]]
+
+  ##################################################
+  # SageMaker Endpoint Config
+  ##################################################
+  FraudEndpointConfig:
+    Type: AWS::SageMaker::EndpointConfig
+    DeletionPolicy: Retain
+    Properties:
+      EndpointConfigName: !Sub 'fraud-endpoint-config-${Environment}'
+      ProductionVariants:
+        - VariantName: AllTraffic
+          InitialInstanceCount: 1
+          InstanceType: !Ref InstanceType
+          InitialVariantWeight: 1.0
+          ModelName: !Ref FraudModel
+      Tags:
+        - Key: Project
+          Value: FraudDetection
+        - Key: Environment
+          Value: !Ref Environment
+
+  ##################################################
+  # SageMaker Endpoint
+  ##################################################
+  FraudEndpoint:
+    Type: AWS::SageMaker::Endpoint
+    Properties:
+      EndpointName: !Sub 'fraud-endpoint-${Environment}'
+      EndpointConfigName: !Ref FraudEndpointConfig
+      Tags:
+        - Key: Project
+          Value: FraudDetection
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  SageMakerEndpointName:
+    Description: SageMaker endpoint name for ML inference
+    Value: !Ref FraudEndpoint
+    Export:
+      Name: !Sub 'fraud-endpoint-name-${Environment}'
+
+  SageMakerEndpointArn:
+    Description: ARN of the SageMaker Endpoint
+    Value: !GetAtt FraudEndpoint.Arn
+    Export:
+      Name: !Sub 'fraud-endpoint-arn-${Environment}'
+
+  SageMakerExecutionRoleArn:
+    Description: IAM Role ARN for SageMaker
+    Value: !GetAtt SageMakerExecutionRole.Arn
+    Export:
+      Name: !Sub 'fraud-sagemaker-role-${Environment}'

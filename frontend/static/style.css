@@ -1,2 +1,381 @@
-/* minimal css */
-body { font-family: Arial, sans-serif; }
+/* ========================================
+   Fraud Detection Chatbot - Global Styles
+   ======================================== */
+
+/* Import Google Fonts (optional; for modern look) */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+/* Root variables for theme */
+:root {
+  --primary-color: #2196f3;      /* Blue for trust/primary buttons */
+  --success-color: #4caf50;      /* Green for approve/low risk */
+  --warning-color: #ff9800;      /* Orange for review/medium */
+  --error-color: #f44336;        /* Red for reject/high risk */
+  --neutral-color: #757575;      /* Gray for text */
+  --bg-color: #f8f9fa;           /* Light background */
+  --card-bg: #ffffff;            /* White cards */
+  --border-radius: 12px;         /* Rounded corners */
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.1);  /* Subtle shadows */
+  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* Global overrides for Streamlit */
+.stApp {
+  font-family: var(--font-family);
+  background-color: var(--bg-color);
+  color: var(--neutral-color);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: #2c3e50;
+  font-weight: 600;
+}
+
+.stMarkdown {
+  line-height: 1.6;
+}
+
+/* Title styling */
+.main-header {
+  text-align: center;
+  margin-bottom: 2rem;
+  color: var(--primary-color);
+}
+
+.main-header h1 {
+  font-size: 2.5rem;
+  margin-bottom: 0.5rem;
+}
+
+/* Sidebar */
+.sidebar .sidebar-content {
+  background-color: var(--card-bg);
+  padding: 1rem;
+  border-radius: var(--border-radius);
+  box-shadow: var(--shadow);
+}
+
+.stSidebar > div > div {
+  max-width: 300px;
+}
+
+.stSelectbox > label, .stTextInput > label {
+  font-weight: 500;
+  color: #2c3e50;
+}
+
+/* Chat messages */
+.stChatMessage {
+  margin: 1rem 0;
+  padding: 1rem;
+  border-radius: var(--border-radius);
+  box-shadow: var(--shadow);
+  max-width: 80%;
+}
+
+.user-message {
+  background-color: #e3f2fd;
+  border-left: 4px solid var(--primary-color);
+  margin-left: auto;
+  text-align: right;
+}
+
+.assistant-message {
+  background-color: #f5f5f5;
+  border-left: 4px solid #9e9e9e;
+  margin-right: auto;
+}
+
+/* Risk-based styling for messages/panels */
+.high-risk {
+  background-color: #ffebee !important;
+  border-left-color: var(--error-color) !important;
+  color: var(--error-color) !important;
+  font-weight: 600;
+}
+
+.medium-risk {
+  background-color: #fff3e0 !important;
+  border-left-color: var(--warning-color) !important;
+  color: var(--warning-color) !important;
+  font-weight: 500;
+}
+
+.low-risk {
+  background-color: #e8f5e8 !important;
+  border-left-color: var(--success-color) !important;
+  color: var(--success-color) !important;
+  font-weight: 500;
+}
+
+/* Decision badges */
+.decision-badge {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  border-radius: 20px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin: 0.25rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s ease;
+}
+
+.decision-badge:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.decision-approve {
+  background-color: var(--success-color);
+  color: white;
+  border: 1px solid var(--success-color);
+}
+
+.decision-review {
+  background-color: var(--warning-color);
+  color: white;
+  border: 1px solid var(--warning-color);
+}
+
+.decision-reject {
+  background-color: var(--error-color);
+  color: white;
+  border: 1px solid var(--error-color);
+}
+
+/* Alarm items */
+.alarm-item {
+  display: flex;
+  align-items: center;
+  margin: 0.5rem 0;
+  padding: 1rem;
+  border-radius: var(--border-radius);
+  background-color: var(--card-bg);
+  box-shadow: var(--shadow);
+  border-left: 4px solid var(--warning-color);
+  transition: box-shadow 0.2s;
+}
+
+.alarm-item:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.alarm-item.high {
+  border-left-color: var(--error-color);
+  background-color: #ffebee;
+}
+
+.alarm-item.medium {
+  border-left-color: var(--warning-color);
+  background-color: #fff3e0;
+}
+
+.alarm-item.low {
+  border-left-color: var(--success-color);
+  background-color: #e8f5e8;
+}
+
+.alarm-icon {
+  width: 24px;
+  height: 24px;
+  margin-right: 0.75rem;
+  flex-shrink: 0;
+}
+
+.alarm-description {
+  flex: 1;
+  font-weight: 500;
+}
+
+/* Charts and metrics */
+.plotly-chart {
+  border-radius: var(--border-radius);
+  box-shadow: var(--shadow);
+  margin: 1rem 0;
+}
+
+.stMetric > label {
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.stMetric > div {
+  font-size: 2rem;
+  font-weight: 700;
+}
+
+/* Forms and inputs */
+.stForm {
+  background-color: var(--card-bg);
+  padding: 1.5rem;
+  border-radius: var(--border-radius);
+  box-shadow: var(--shadow);
+  margin: 1rem 0;
+}
+
+.stNumberInput > div > div > input,
+.stTextInput > div > div > input,
+.stTextArea > div > div > textarea {
+  border-radius: var(--border-radius) !important;
+  border: 2px solid #e0e0e0 !important;
+  padding: 0.75rem !important;
+  transition: border-color 0.2s;
+}
+
+.stNumberInput > div > div > input:focus,
+.stTextInput > div > div > input:focus,
+.stTextArea > div > div > textarea:focus {
+  border-color: var(--primary-color) !important;
+  box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.1) !important;
+}
+
+.stButton > button {
+  border-radius: var(--border-radius);
+  font-weight: 600;
+  padding: 0.75rem 1.5rem;
+  transition: all 0.2s;
+}
+
+.stButton > button[type="primary"] {
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+}
+
+.stButton > button:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow);
+}
+
+/* File uploader */
+.stFileUploader {
+  border: 2px dashed #e0e0e0;
+  border-radius: var(--border-radius);
+  padding: 2rem;
+  text-align: center;
+  transition: border-color 0.2s;
+}
+
+.stFileUploader:hover {
+  border-color: var(--primary-color);
+  background-color: #f0f8ff;
+}
+
+/* Expander */
+.stExpander {
+  border-radius: var(--border-radius);
+  border: 1px solid #e0e0e0;
+  box-shadow: var(--shadow);
+}
+
+.stExpander > div > label {
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+/* Info/Warning/Error blocks */
+.stInfo, .stWarning, .stError, .stSuccess {
+  border-radius: var(--border-radius);
+  padding: 1rem;
+  margin: 1rem 0;
+  border-left: 4px solid;
+  box-shadow: var(--shadow);
+}
+
+.stSuccess {
+  background-color: #d4edda;
+  border-left-color: var(--success-color);
+  color: #155724;
+}
+
+.stInfo {
+  background-color: #d1ecf1;
+  border-left-color: var(--primary-color);
+  color: #0c5460;
+}
+
+.stWarning {
+  background-color: #fff3cd;
+  border-left-color: var(--warning-color);
+  color: #856404;
+}
+
+.stError {
+  background-color: #f8d7da;
+  border-left-color: var(--error-color);
+  color: #721c24;
+}
+
+/* Chat input */
+.stChatInput input {
+  border-radius: 25px !important;
+  border: 2px solid #e0e0e0 !important;
+  padding: 0.75rem 1rem !important;
+  font-size: 1rem;
+}
+
+.stChatInput input:focus {
+  border-color: var(--primary-color) !important;
+  box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.1) !important;
+}
+
+/* Responsive: Mobile */
+@media (max-width: 768px) {
+  .stApp {
+    padding: 0.5rem;
+  }
+
+  .stChatMessage {
+    max-width: 95% !important;
+  }
+
+  h1 {
+    font-size: 2rem;
+  }
+
+  .decision-badge {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.8rem;
+  }
+}
+
+/* Footer */
+.footer {
+  text-align: center;
+  padding: 1rem;
+  color: var(--neutral-color);
+  font-size: 0.9rem;
+  border-top: 1px solid #e0e0e0;
+  margin-top: 2rem;
+}
+
+/* Animations (subtle) */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.stChatMessage, .alarm-item, .stExpander {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Scrollbar (custom for chat history if needed) */
+.stMarkdown::-webkit-scrollbar {
+  width: 8px;
+}
+
+.stMarkdown::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 10px;
+}
+
+.stMarkdown::-webkit-scrollbar-thumb {
+  background: var(--primary-color);
+  border-radius: 10px;
+}
+
+.stMarkdown::-webkit-scrollbar-thumb:hover {
+  background: #1976d2;
+}

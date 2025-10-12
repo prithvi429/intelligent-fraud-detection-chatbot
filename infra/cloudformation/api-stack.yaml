@@ -1,1 +1,237 @@
-# api stack
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Fraud Detection API Stack
+  Includes: API Gateway, Lambda (Fraud Scoring, Chatbot Guidance), IAM, Env Vars
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+    Description: Deployment environment (dev or prod)
+
+  FraudLambdaCodeS3Bucket:
+    Type: String
+    Description: S3 bucket containing fraud_api.zip
+
+  FraudLambdaCodeS3Key:
+    Type: String
+    Description: S3 key for fraud_api.zip
+
+  ChatbotLambdaCodeS3Bucket:
+    Type: String
+    Description: S3 bucket containing chatbot_handler.zip
+
+  ChatbotLambdaCodeS3Key:
+    Type: String
+    Description: S3 key for chatbot_handler.zip
+
+  RDSEndpoint:
+    Type: String
+    Description: RDS endpoint (fraud detection database)
+
+  OpenAIKeyParam:
+    Type: AWS::SSM::Parameter::Value<String>
+    Description: OpenAI API key (stored in AWS SSM Parameter Store)
+
+Resources:
+  ##################################################
+  # Lambda Execution Role
+  ##################################################
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'fraud-lambda-${Environment}-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonRDSDataFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+      Tags:
+        - Key: Project
+          Value: FraudDetection
+        - Key: Environment
+          Value: !Ref Environment
+
+  ##################################################
+  # Fraud Scoring Lambda
+  ##################################################
+  FraudScoringLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'fraud-scoring-${Environment}'
+      Runtime: python3.11
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Handler: fraud_api.lambda_handler
+      Code:
+        S3Bucket: !Ref FraudLambdaCodeS3Bucket
+        S3Key: !Ref FraudLambdaCodeS3Key
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          DB_URL: !Ref RDSEndpoint
+          S3_BUCKET: !Ref FraudLambdaCodeS3Bucket
+      Tags:
+        - Key: Function
+          Value: FraudScoring
+
+  ##################################################
+  # Chatbot Lambda
+  ##################################################
+  ChatbotLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'fraud-chatbot-${Environment}'
+      Runtime: python3.11
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Handler: chatbot_handler.lambda_handler
+      Code:
+        S3Bucket: !Ref ChatbotLambdaCodeS3Bucket
+        S3Key: !Ref ChatbotLambdaCodeS3Key
+      Timeout: 60
+      MemorySize: 1024
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          OPENAI_API_KEY: !Ref OpenAIKeyParam
+      Tags:
+        - Key: Function
+          Value: ChatbotHandler
+
+  ##################################################
+  # API Gateway
+  ##################################################
+  ApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub 'fraud-api-${Environment}'
+      Description: Fraud detection API with chatbot support
+      EndpointConfiguration:
+        Types: ["REGIONAL"]
+
+  # /score_claim
+  ScoreClaimResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: score_claim
+
+  ScoreClaimMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ScoreClaimResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FraudScoringLambda.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 200
+
+  # /explain/{alarm_type}
+  ExplainResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: explain
+
+  AlarmProxyResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !Ref ExplainResource
+      PathPart: "{alarm_type}"
+
+  ExplainMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref AlarmProxyResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: GET
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FraudScoringLambda.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 200
+
+  # /guidance
+  GuidanceResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: guidance
+
+  GuidanceMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref GuidanceResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ChatbotLambda.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 200
+
+  ##################################################
+  # API Deployment
+  ##################################################
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - ScoreClaimMethod
+      - ExplainMethod
+      - GuidanceMethod
+    Properties:
+      RestApiId: !Ref ApiGateway
+      StageName: !Ref Environment
+
+  ##################################################
+  # Permissions for API Gateway → Lambda
+  ##################################################
+  FraudLambdaPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: FraudScoringLambda
+    Properties:
+      FunctionName: !Ref FraudScoringLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*/*'
+
+  ChatbotLambdaPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: ChatbotLambda
+    Properties:
+      FunctionName: !Ref ChatbotLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*/*'
+
+Outputs:
+  ApiUrl:
+    Description: Invoke URL for the Fraud Detection API
+    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+  FraudLambdaArn:
+    Description: ARN of the Fraud Scoring Lambda
+    Value: !GetAtt FraudScoringLambda.Arn
+  ChatbotLambdaArn:
+    Description: ARN of the Chatbot Lambda
+    Value: !GetAtt ChatbotLambda.Arn

@@ -1,1 +1,15 @@
-# prod vars
+environment          = "prod"
+aws_region           = "us-east-1"
+s3_bucket_name       = "fraud-chatbot-artifacts-prod"
+lambda_zip_s3_key    = "fraud_api_prod.zip"
+chatbot_zip_s3_key   = "chatbot_handler_prod.zip"
+model_s3_key         = "model_prod.tar.gz"
+db_username          = "postgres"
+db_password          = "prodpassword456"  # Use Secrets Manager
+db_instance_class    = "db.t3.small"  # Larger for prod
+sagemaker_instance_type = "ml.m5.large"  # More power
+
+tags = {
+  Environment = "prod"
+  BillingCode = "prod-fraud"
+}

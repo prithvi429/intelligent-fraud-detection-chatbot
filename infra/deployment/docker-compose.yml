@@ -1,0 +1,136 @@
+version: '3.8'
+
+services:
+  ##################################################
+  # FastAPI Application (Fraud Detection API)
+  ##################################################
+  api:
+    build:
+      context: ../
+      dockerfile: infra/deployment/Dockerfile
+    container_name: fraud_api
+    environment:
+      - DATABASE_URL=postgresql://fraud_user:fraud_pass@db:5432/fraud_db
+      - REDIS_URL=redis://redis:6379/0
+      - S3_ENDPOINT=http://minio:9000
+      - AWS_ENDPOINT=http://localstack:4566
+      - ENVIRONMENT=dev
+      - OPENAI_API_KEY=dummy_openai_key
+      - WEATHER_API_KEY=dummy_weather_key
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - redis
+      - localstack
+      - minio
+    command: >
+      bash -c "
+        uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+    volumes:
+      - ../src:/app/src
+    restart: always
+
+  ##################################################
+  # PostgreSQL Database
+  ##################################################
+  db:
+    image: postgres:15
+    container_name: fraud_db
+    environment:
+      POSTGRES_DB: fraud_db
+      POSTGRES_USER: fraud_user
+      POSTGRES_PASSWORD: fraud_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ../infra/scripts/seed_db.sql:/docker-entrypoint-initdb.d/seed_db.sql
+    restart: always
+
+  ##################################################
+  # Redis (For Caching, NLP, Alarms)
+  ##################################################
+  redis:
+    image: redis:7
+    container_name: fraud_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: always
+
+  ##################################################
+  # MinIO (Local S3-compatible storage)
+  ##################################################
+  minio:
+    image: minio/minio:latest
+    container_name: fraud_minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"  # API
+      - "9001:9001"  # Console UI
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: always
+
+  ##################################################
+  # PgAdmin (Optional DB GUI)
+  ##################################################
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: fraud_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@fraud.ai
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - db
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    restart: always
+
+  ##################################################
+  # LocalStack (Mock AWS for local testing)
+  ##################################################
+  localstack:
+    image: localstack/localstack:latest
+    container_name: fraud_localstack
+    ports:
+      - "4566:4566"  # Edge port
+      - "4571:4571"
+    environment:
+      SERVICES: lambda,s3,apigateway,sagemaker,iam,logs
+      DEBUG: 1
+      DATA_DIR: /tmp/localstack/data
+      LAMBDA_EXEC_ARGS: "--docker-mode local"
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - localstack_data:/tmp/localstack/data
+    healthcheck:
+      test: ["CMD", "awslocal", "s3", "ls"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: always
+
+##################################################
+# Volumes
+##################################################
+volumes:
+  db_data:
+  redis_data:
+  minio_data:
+  pgadmin_data:
+  localstack_data:
