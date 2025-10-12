@@ -1,257 +1,164 @@
 """
-Main FastAPI Application
-------------------------
-Entry point for the Insurance Fraud Detection Chatbot API.
+Chatbot Agent
+-------------
+Creates and runs the LangChain-powered insurance fraud detection agent.
 
-Features:
-- Fraud Scoring, Alarm Explanations, and Policy Guidance APIs
-- Integrates SQL DB, SageMaker ML model, and Pinecone vector DB
-- Structured logging, health monitoring, and secure middleware
+Core responsibilities:
+- Initialize LLM (OpenAI)
+- Load prompt & tools
+- Maintain conversation session (optional)
+- Safely invoke reasoning flow with error handling
 
-Run locally:
-    uvicorn src.main:app --reload
+Usage:
+    from chatbot.agent import run_agent
+    print(run_agent("Score $5000 accident claim"))
 """
 
-import time
-from datetime import datetime
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Depends, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from fastapi.exceptions import RequestValidationError
-from sqlalchemy.orm import Session
-import uvicorn
+from typing import Optional, Tuple
+import os
+import traceback
 
-# =========================================================
-# 🔧 Local Imports
-# =========================================================
-from src.config import config
-from src.utils.db import init_db, get_db
-from src.utils.logger import logger
-from src.utils.security import get_current_user
-from src.fraud_engine.ml_inference import load_fraud_model, is_model_loaded
-from src.api.endpoints import score_claim, explain_alarm, get_guidance
-from src.middleware.logging_middleware import LoggingMiddleware  # ✅ Logging Middleware
+from langchain.agents import initialize_agent, AgentType
+from langchain_openai import ChatOpenAI
+
+from chatbot.tools import (
+    submit_and_score,
+    explain_alarms,
+    retrieve_guidance,
+    qa_handler,
+)
+from chatbot.utils.session_manager import SessionManager
+from chatbot.utils.formatter import format_chat_response
+from chatbot.utils.logger import logger, log_tool_call
+from chatbot.config.settings import settings
 
 
 # =========================================================
-# 🧠 Application Lifecycle
+# 📘 Prompt Loader
 # =========================================================
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Handle startup and shutdown events for the app."""
-    start_time = time.time()
-    logger.info("🚀 Starting Insurance Fraud Detection Chatbot API...")
-    logger.info(f"Environment: {config.ENV.upper()} | DEBUG={config.DEBUG} | LOG_LEVEL={config.LOG_LEVEL}")
+def load_prompt(file_path: str = "chatbot/prompts/system_prompt.md") -> str:
+    """
+    Load the system prompt from a Markdown file.
 
+    Args:
+        file_path (str): Path to the system prompt file.
+
+    Returns:
+        str: Prompt content for the LLM system role.
+    """
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Prompt file not found: {file_path}")
+    with open(file_path, "r", encoding="utf-8") as f:
+        return f.read().strip()
+
+
+# =========================================================
+# 🧠 Agent Creation
+# =========================================================
+def create_agent(session_id: Optional[str] = None) -> Tuple[object, Optional[SessionManager]]:
+    """
+    Create and initialize the chatbot agent.
+
+    Args:
+        session_id (str, optional): Unique chat session ID.
+
+    Returns:
+        Tuple[AgentExecutor, Optional[SessionManager]]
+    """
     try:
-        # 1️⃣ Initialize Database
-        init_db()
-        logger.info("✅ Database connection initialized.")
-
-        # 2️⃣ Load ML Model (SageMaker or local)
-        if config.is_ml_enabled:
-            load_fraud_model()
-            logger.info("✅ Fraud ML model loaded successfully.")
-        else:
-            logger.warning("⚠️ ML model not found. Using rule-based engine fallback.")
-
-        # 3️⃣ Initialize Pinecone (if enabled)
-        if config.is_pinecone_enabled:
-            from src.chatbot.tools.retrieve_guidance import init_pinecone
-            init_pinecone()
-            logger.info("✅ Pinecone vector DB initialized.")
-
-        logger.info(f"✨ Startup completed in {time.time() - start_time:.2f}s")
-
-    except Exception as e:
-        logger.error(f"❌ Startup error: {e}")
-        raise
-
-    # App runs here
-    yield
-
-    # Shutdown
-    uptime = time.time() - start_time
-    logger.info("🛑 Shutting down API service...")
-    logger.info(f"🕒 Total uptime: {uptime:.2f}s")
-
-
-# =========================================================
-# ⚙️ FastAPI Configuration
-# =========================================================
-app = FastAPI(
-    title="Insurance Fraud Detection Chatbot API",
-    version="1.0.0",
-    description="""
-AI-driven system for analyzing and detecting fraudulent insurance claims.
-
-### Core Capabilities
-- 🧠 **Fraud Scoring** — ML + rule-based detection for 13 fraud patterns  
-- 📘 **Alarm Explanations** — Human-readable insights into alarms  
-- 💬 **Policy Guidance** — LLM + Pinecone hybrid Q&A search
-
-Built using **FastAPI**, **SQLAlchemy**, **LangChain**, and **SageMaker**.
-""",
-    docs_url="/docs",
-    redoc_url="/redoc",
-    lifespan=lifespan,
-)
-
-
-# =========================================================
-# 🌍 Middleware Configuration
-# =========================================================
-
-# 1️⃣ CORS Middleware (must be first)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:8501",  # Streamlit frontend
-        "http://localhost:3000",  # React dev
-        "*",                      # Allow all (dev mode)
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# 2️⃣ Logging Middleware (wraps all)
-app.add_middleware(
-    LoggingMiddleware,
-    redact_pii=not config.DEBUG  # Redact PII in production only
-)
-
-
-# =========================================================
-# ⚠️ Exception Handling
-# =========================================================
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Handle pydantic validation errors globally."""
-    logger.warning(f"Validation error at {request.url.path}: {exc.errors()}")
-    return JSONResponse(
-        status_code=422,
-        content={
-            "detail": "Invalid input data. Please verify the request body.",
-            "errors": exc.errors(),
-        },
-    )
-
-
-@app.middleware("http")
-async def global_exception_middleware(request: Request, call_next):
-    """Global middleware to catch unhandled errors."""
-    try:
-        return await call_next(request)
-    except HTTPException as e:
-        logger.warning(f"Handled HTTPException: {e.detail}")
-        raise
-    except Exception as e:
-        logger.error(f"Unhandled exception: {type(e).__name__}: {e}")
-        return JSONResponse(
-            status_code=500,
-            content={"detail": "Internal server error", "error": str(e)},
+        # Initialize LLM
+        llm = ChatOpenAI(
+            model=settings.OPENAI_MODEL,
+            temperature=0.1,
+            openai_api_key=settings.OPENAI_API_KEY,
+            max_tokens=settings.MAX_TOKENS,
         )
 
+        # Load tools
+        tools = [
+            submit_and_score,
+            explain_alarms,
+            retrieve_guidance,
+            qa_handler,
+        ]
 
-# =========================================================
-# 🧩 Routers
-# =========================================================
-app.include_router(score_claim.router, prefix="/api/v1", tags=["Fraud Scoring"])
-app.include_router(explain_alarm.router, prefix="/api/v1", tags=["Explanations"])
-app.include_router(get_guidance.router, prefix="/api/v1", tags=["Guidance"])
+        # Initialize session
+        session = SessionManager(session_id) if session_id else None
 
+        # Load system prompt
+        system_prompt = load_prompt()
 
-# =========================================================
-# 🌡️ Health and Root Endpoints
-# =========================================================
-@app.get("/", tags=["Root"])
-async def root_endpoint(request: Request):
-    """Root endpoint for metadata and basic health info."""
-    return {
-        "message": "Welcome to the Insurance Fraud Detection Chatbot API!",
-        "version": "1.0.0",
-        "status": "running",
-        "docs": str(request.url_for("docs")),
-        "ml_model_loaded": config.is_ml_enabled and is_model_loaded(),
-        "pinecone_enabled": config.is_pinecone_enabled,
-        "timestamp": datetime.utcnow().isoformat(),
-    }
+        # Create agent with reasoning + tool use
+        agent_executor = initialize_agent(
+            tools=tools,
+            llm=llm,
+            agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+            verbose=settings.DEBUG,
+            handle_parsing_errors=True,
+            agent_kwargs={
+                "system_message": system_prompt
+            },
+        )
 
+        logger.info(f"✅ Agent initialized (Session: {session_id or 'None'})")
+        return agent_executor, session
 
-@app.get("/health", tags=["Health"])
-async def health_check():
-    """Health check for DB, ML, and Pinecone readiness."""
-    db_status = ml_status = pinecone_status = "ok"
-
-    # Database Check
-    try:
-        db: Session = next(get_db())
-        db.execute("SELECT 1")
-        db.close()
     except Exception as e:
-        db_status = f"error: {e}"
-
-    # ML Model Check
-    ml_status = "ok" if is_model_loaded() else "not loaded"
-
-    # Pinecone Check
-    pinecone_status = "ok" if config.is_pinecone_enabled else "disabled"
-
-    healthy = db_status == "ok" and ml_status == "ok"
-    status_code = 200 if healthy else 503
-
-    return JSONResponse(
-        status_code=status_code,
-        content={
-            "status": "healthy" if healthy else "degraded",
-            "database": db_status,
-            "ml_model": ml_status,
-            "pinecone": pinecone_status,
-            "timestamp": datetime.utcnow().isoformat(),
-        },
-    )
+        logger.error(f"❌ Agent creation failed: {e}")
+        raise
 
 
 # =========================================================
-# 👤 Authenticated User Endpoint
+# 🚀 Run Agent
 # =========================================================
-@app.get("/me", tags=["User"])
-async def get_current_user_info(current_user=Depends(get_current_user)):
-    """Return info about the current authenticated user."""
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return {
-        "user_id": current_user.get("user_id", "unknown"),
-        "role": current_user.get("role", "user"),
-    }
+def run_agent(query: str, session_id: Optional[str] = None) -> str:
+    """
+    Execute the chatbot agent for a given user query.
+
+    Args:
+        query (str): User input or claim description.
+        session_id (str, optional): Chat session ID for context persistence.
+
+    Returns:
+        str: The chatbot's formatted response.
+    """
+    try:
+        # Initialize
+        agent_executor, session = create_agent(session_id)
+
+        if session:
+            session.add_message("human", query)
+
+        # Run reasoning + tool invocation
+        raw_result = agent_executor.invoke({"input": query})
+        response = raw_result.get("output") if isinstance(raw_result, dict) else str(raw_result)
+
+        # Format
+        formatted_response = format_chat_response(response)
+
+        if session:
+            session.add_message("ai", formatted_response)
+
+        logger.info(f"🧠 Agent response generated for session={session_id}: {formatted_response[:100]}...")
+        return formatted_response
+
+    except Exception as e:
+        error_message = f"⚠️ An error occurred while processing your request: {str(e)}"
+        logger.error(f"Agent error: {e}\n{traceback.format_exc()}")
+        return error_message
 
 
 # =========================================================
-# ▶️ CLI Server Runner
-# =========================================================
-def run_api(host: str = None, port: int = None, reload: bool = None):
-    """Launch FastAPI server (CLI entry)."""
-    host = host or config.API_HOST
-    port = port or config.API_PORT
-    reload = reload if reload is not None else config.DEBUG
-
-    logger.info(f"🌐 Starting server → http://{host}:{port}")
-    logger.info(f"📘 Docs available at → http://{host}:{port}/docs")
-
-    uvicorn.run(
-        "src.main:app",
-        host=host,
-        port=port,
-        reload=reload,
-        log_level=config.LOG_LEVEL.lower(),
-        access_log=config.DEBUG,
-    )
-
-
-# =========================================================
-# 🧩 Main Entry
+# 🧪 Local REPL (for manual testing)
 # =========================================================
 if __name__ == "__main__":
-    run_api()
+    print("🧠 Fraud Detection Chatbot — Interactive Mode")
+    print("Type 'exit' to quit.\n")
+
+    session_id = "local_session"
+    while True:
+        user_input = input("You: ")
+        if user_input.lower() in ("exit", "quit"):
+            break
+        response = run_agent(user_input, session_id)
+        print(f"FraudBot: {response}\n")
