@@ -101,3 +101,7 @@ pandas==2.2.2   # Used for visualization and forms
 # ===========================================
 setuptools>=70.0.0
 wheel>=0.43.0
+
+
+pydantic-settings==2.1.0  # For BaseSettings (or use pydantic v2+)
+python-dotenv==1.0.0      
