@@ -5,10 +5,15 @@ Handles fraud scoring, risk assessment, and decision logic.
 This mock implementation aligns with test expectations.
 """
 
+from typing import Dict, Any
 from src.models.fraud import Decision
 from src.utils.logger import logger
+import json
 
-async def score_claim(claim: dict):
+LOW_RISK_THRESHOLD = 30
+HIGH_RISK_THRESHOLD = 70
+
+async def score_claim(claim: Dict[str, Any]) -> Dict[str, Any]:
     """Mock fraud scoring logic with rule-based and probability evaluation."""
 
     amount = claim.get("amount", 0)
@@ -42,19 +47,23 @@ async def score_claim(claim: dict):
     fraud_probability = min(fraud_probability, 100)
 
     # Decision thresholds
-    if fraud_probability < 30:
+    if fraud_probability < LOW_RISK_THRESHOLD:
         decision = Decision.APPROVE.value
         explanation = "Low risk — claim approved automatically."
-    elif 30 <= fraud_probability <= 70:
+    elif fraud_probability <= HIGH_RISK_THRESHOLD:
         decision = Decision.REVIEW.value
         explanation = "Medium risk — requires manual review."
     else:
         decision = Decision.REJECT.value
         explanation = "High risk — claim rejected due to suspicious indicators."
 
-    logger.info(
-        f"🧠 Scored claim {claim.get('claimant_id')}: {decision} ({fraud_probability}%)"
-    )
+    logger.info(json.dumps({
+        "event": "score_complete",
+        "claimant_id": claim.get("claimant_id"),
+        "decision": decision,
+        "fraud_probability": fraud_probability,
+        "alarms": alarms,
+    }))
 
     return {
         "fraud_probability": fraud_probability,

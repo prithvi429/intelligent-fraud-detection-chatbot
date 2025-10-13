@@ -25,14 +25,14 @@ from src.nlp.text_analyzer import analyze_text
 from src.fraud_engine.constants import SUSPICIOUS_PHRASES
 
 # Modular rule imports (independent files)
-from src.fraud_engine.rules.high_amount_check import check_high_amount
-from src.fraud_engine.rules.repeat_claimant_check import check_repeat_claimant
-from src.fraud_engine.rules.suspicious_keywords_check import check_suspicious_keywords
-from src.fraud_engine.rules.location_mismatch_check import check_location_mismatch
-from src.fraud_engine.rules.duplicate_claims_check import check_duplicate_claims
-from src.fraud_engine.rules.vendor_fraud_check import check_vendor_fraud
-from src.fraud_engine.rules.time_pattern_fraud_check import check_time_patterns
-from src.fraud_engine.rules.external_mismatch_check import check_external_mismatch
+from src.fraud_engine.rules.high_amount import check_high_amount
+from src.fraud_engine.rules.repeat_claimant import check_repeat_claimant
+from src.fraud_engine.rules.suspicious_keywords import check_suspicious_keywords
+from src.fraud_engine.rules.location_mismatch import check_location_mismatch
+from src.fraud_engine.rules.duplicate_claims import check_duplicate_claims
+from src.fraud_engine.rules.vendor_fraud import check_vendor_fraud
+from src.fraud_engine.rules.time_patterns import check_time_patterns
+from src.fraud_engine.rules.external_mismatch import check_external_mismatch
 
 
 def check_all_alarms(claim: ClaimData, db: Optional[Session] = None) -> List[str]:

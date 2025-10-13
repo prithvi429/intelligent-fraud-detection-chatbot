@@ -11,6 +11,11 @@ from src.api.dependencies import authenticated_user
 from src.config import config
 from src.utils.logger import logger
 
+
+from fastapi.responses import ORJSONResponse
+from src.services.explain import get_explanation_for_alarm
+
+
 router = APIRouter(tags=["Fraud Explanations"])
 
 # =========================================================
@@ -85,43 +90,33 @@ ALARM_EXPLANATIONS = {
 }
 
 
+router = APIRouter(tags=["Fraud Explanations"])
+
 # =========================================================
 # 🎯 Endpoint: Explain Fraud Alarm
 # =========================================================
-@router.get(
-    "/explain/{alarm_type}",
-    response_model=FraudAlarm,
-    summary="Explain a specific fraud alarm",
-    description="Returns a human-readable explanation and tips for a given alarm type.",
-)
-async def explain_alarm_endpoint(
-    alarm_type: str,
-    user: dict = Depends(authenticated_user),
-):
+@router.get("/api/v1/explain/{alarm_name}")
+async def explain_alarm(alarm_name: str):
     """
-    Get an explanation for a specific fraud alarm.
-    Chatbot uses this to answer 'Why was my claim flagged?'
+    Get explanation for a specific fraud alarm.
+    Returns:
+      - 200: If alarm exists (with type & description)
+      - 404: If alarm not found
     """
-    if not alarm_type:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Alarm type is required")
+    # Log incoming request
+    logger.info(f"📘 Received explanation request for alarm: {alarm_name}")
 
-    alarm_key = alarm_type.lower().replace(" ", "_")
+    # Get explanation data from service layer
+    explanation = get_explanation_for_alarm(alarm_name)
 
-    if alarm_key not in ALARM_EXPLANATIONS:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Unknown alarm type: {alarm_type}. Valid types: {list(ALARM_EXPLANATIONS.keys())}",
+    # Handle unknown alarms (404)
+    if not explanation:
+        logger.warning(f"⚠️ Unknown alarm requested: {alarm_name}")
+        return ORJSONResponse(
+            status_code=404,
+            content={"detail": f"Unknown alarm '{alarm_name}' explanation not found."},
         )
 
-    expl = ALARM_EXPLANATIONS[alarm_key]
-    tips_text = "; ".join(expl["tips"])
-    full_description = f"{expl['description']} Suggested next steps: {tips_text}."
-
-    logger.info(f"💬 Explained alarm '{alarm_type}' for user {user.get('user_id', 'anonymous')}")
-
-    return FraudAlarm(
-        type=alarm_key,
-        description=full_description,
-        severity=expl["severity"],
-        evidence={"tips": expl["tips"], "source": "internal_guidelines_v1"},
-    )
+    # Successful response
+    logger.info(f"✅ Explanation found for alarm: {alarm_name}")
+    return ORJSONResponse(status_code=200, content=explanation)

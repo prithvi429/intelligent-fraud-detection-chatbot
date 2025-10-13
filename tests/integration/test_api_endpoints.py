@@ -99,7 +99,7 @@ def test_score_claim_validation_error(mock_error, client):
 
     response = client.post("/api/v1/score_claim", json=payload)
     assert response.status_code == 422
-    assert "Invalid input" in str(response.json()).capitalize()
+    assert "invalid input" in str(response.json()).lower()
 
     # Error log check
     mock_error.assert_called_once()

@@ -3,10 +3,12 @@ Explain Alarms Tool
 -------------------
 LangChain tool: Fetches detailed alarm explanation from the backend `/explain/{alarm_type}` endpoint.
 
-- Extracts alarm_type from query (regex + fuzzy match)
-- Calls backend API for detailed meaning, severity, evidence, and mitigation steps
-- Returns a Markdown-formatted explanation
-- Logs all calls and errors
+Features:
+- Extracts alarm_type from user query (regex + fuzzy keyword mapping)
+- Calls backend API for explanation, severity, evidence, and mitigation steps
+- Returns Markdown-formatted explanation
+- Handles invalid or unknown alarms gracefully
+- Logs all calls and errors for observability
 
 Usage:
     explain_alarms("Explain high amount alarm", session_id="user123")
@@ -15,12 +17,16 @@ Usage:
 from langchain.tools import tool
 from typing import Optional
 import re
+
 from ..utils.api_client import call_explain_alarm
 from ..utils.logger import log_tool_call, log_error
 from ..config.settings import settings
 from ..config.constants import ALARM_TYPES, ALARM_EMOJIS
 
 
+# =========================================================
+# 🧠 LangChain Tool Definition
+# =========================================================
 @tool("explain_alarms", return_direct=True)
 def explain_alarms(query: str, session_id: Optional[str] = None) -> str:
     """
@@ -40,7 +46,7 @@ def explain_alarms(query: str, session_id: Optional[str] = None) -> str:
         # ------------------------------------------------
         # 🔍 Step 1: Identify Alarm Type
         # ------------------------------------------------
-        query_lower = query.lower()
+        query_lower = query.lower().strip()
         alarm_type = None
 
         # Direct match
@@ -49,7 +55,7 @@ def explain_alarms(query: str, session_id: Optional[str] = None) -> str:
                 alarm_type = valid_type
                 break
 
-        # Heuristic fallback detection
+        # Heuristic fallback mapping
         if not alarm_type:
             keyword_map = {
                 "late": "late_reporting",
@@ -67,16 +73,19 @@ def explain_alarms(query: str, session_id: Optional[str] = None) -> str:
                     alarm_type = mapped
                     break
 
+        # ------------------------------------------------
+        # ❓ Step 2: Handle Unknown Alarm
+        # ------------------------------------------------
         if not alarm_type:
             supported = ", ".join(ALARM_TYPES[:6]) + ", etc."
             return (
-                "❓ **Couldn’t identify the alarm type.**\n"
-                f"Try asking about a specific one, e.g., `Explain high_amount`.\n\n"
+                "❓ **Unknown or unrecognized alarm type.**\n"
+                "Try asking about a specific one, e.g., `Explain high_amount`.\n\n"
                 f"Supported alarms include: {supported}"
             )
 
         # ------------------------------------------------
-        # ⚙️ Step 2: Call Backend API
+        # ⚙️ Step 3: Call Backend API
         # ------------------------------------------------
         result = call_explain_alarm(alarm_type, settings.BACKEND_URL)
         if not result:
@@ -86,7 +95,7 @@ def explain_alarms(query: str, session_id: Optional[str] = None) -> str:
             )
 
         # ------------------------------------------------
-        # 📊 Step 3: Extract Fields
+        # 📊 Step 4: Extract Fields
         # ------------------------------------------------
         description = result.get("description", "No detailed explanation available.")
         severity = result.get("severity", "medium").lower()
@@ -96,7 +105,7 @@ def explain_alarms(query: str, session_id: Optional[str] = None) -> str:
         emoji = ALARM_EMOJIS.get(severity, "⚠️")
 
         # ------------------------------------------------
-        # 🧾 Step 4: Format Markdown Response
+        # 🧾 Step 5: Format Markdown Response
         # ------------------------------------------------
         formatted = [
             f"{emoji} **Explanation for {alarm_type.replace('_', ' ').title()} Alarm** ({severity.upper()} Severity)",
@@ -123,3 +132,20 @@ def explain_alarms(query: str, session_id: Optional[str] = None) -> str:
             "❌ **System Error:** Something went wrong while explaining this alarm.\n"
             "Please try again or ask about another one."
         )
+
+
+# =========================================================
+# 🧩 Test Compatibility Wrapper (Singular)
+# =========================================================
+def explain_alarm(alarm_type: str) -> str:
+    """
+    ✅ Test-safe wrapper used in integration tests.
+    Delegates to `explain_alarms()` to ensure consistent behavior.
+    """
+    return explain_alarms(f"Explain {alarm_type}")
+
+
+# =========================================================
+# 📤 Exports
+# =========================================================
+__all__ = ["explain_alarms", "explain_alarm"]

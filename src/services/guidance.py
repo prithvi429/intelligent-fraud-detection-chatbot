@@ -1,15 +1,31 @@
 """
 Guidance Service
 ----------------
-Provides FAQ and general guidance for claim-related queries.
+Provides chatbot-style guidance responses for user queries.
 """
 
-def get_guidance_response(query: str) -> dict:
-    """Returns a simple mock guidance response."""
-    query = query.lower().strip()
-    if "document" in query:
-        return {"response": "You need to submit ID proof, medical bills, and police report if applicable."}
-    elif "status" in query:
-        return {"response": "You can track your claim status on the portal using your claim ID."}
-    else:
-        return {"response": "Please rephrase your question or contact support for help."}
+def get_guidance_response(query: str):
+    """Return chatbot-style guidance response and relevance score."""
+
+    if not query.strip():
+        # Empty query → low relevance
+        return {
+            "response": "Please ask a valid question about claims or fraud detection.",
+            "relevance_score": 0.0
+        }
+
+    # For document-related queries
+    if "document" in query.lower():
+        return {
+            "response": (
+                "You need to submit all relevant documents such as ID proof, medical bills, "
+                "and a police report if applicable."
+            ),
+            "relevance_score": 0.95
+        }
+
+    # Default fallback for other general questions
+    return {
+        "response": "I'm here to assist with fraud detection and claim-related queries.",
+        "relevance_score": 0.7
+    }
