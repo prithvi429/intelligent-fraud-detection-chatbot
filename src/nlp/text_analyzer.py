@@ -1,5 +1,3 @@
-def extract_keywords(text: str):
-    return []
 """
 NLP Text Analyzer
 -----------------
@@ -12,7 +10,7 @@ Detects:
 - Sentiment analysis (negative/exaggerated tone)
 
 Technologies:
-- spaCy (NER, matcher)
+- spaCy (NER, pattern matching)
 - SentenceTransformers (semantic similarity)
 - TextBlob (sentiment)
 """
@@ -24,24 +22,26 @@ from spacy.matcher import Matcher
 from sentence_transformers import SentenceTransformer, util
 from textblob import TextBlob
 from typing import List, Dict, Any, Optional
+
 from src.config import config
 from src.utils.logger import logger
 from src.utils.cache import cache_get, cache_set
-from src.fraud_engine.alarms import SUSPICIOUS_PHRASES
+from src.fraud_engine.constants import SUSPICIOUS_PHRASES
 
 # =========================================================
-# ⚙️ Global Model Cache
+# ⚙️ Global Model Cache (thread-safe lazy load)
 # =========================================================
 _nlp = None
 _model = None
 _matcher = None
 MODEL_LOAD_LOCK = threading.Lock()
 
+
 # =========================================================
 # 🧠 Model Loader
 # =========================================================
 def load_nlp_models():
-    """Load spaCy + sentence-transformers models safely (lazy, thread-safe)."""
+    """Load spaCy and SentenceTransformer models safely (thread-safe lazy load)."""
     global _nlp, _model, _matcher
     with MODEL_LOAD_LOCK:
         try:
@@ -51,26 +51,37 @@ def load_nlp_models():
 
             if _model is None:
                 _model = SentenceTransformer("all-MiniLM-L6-v2")
-                logger.info("✅ Sentence-transformer model loaded.")
+                logger.info("✅ SentenceTransformer model loaded.")
 
             if _matcher is None:
                 _matcher = Matcher(_nlp.vocab)
-                _matcher.add("SUSPICIOUS_PATTERN", [
-                    [{"LOWER": {"IN": ["fake", "staged", "ghost", "exaggerated"]}}],
-                    [{"LOWER": "quick"}, {"LOWER": "cash"}],
-                    [{"ENT_TYPE": "DATE"}, {"LOWER": "injury"}],
-                ])
+                _matcher.add(
+                    "SUSPICIOUS_PATTERN",
+                    [
+                        [{"LOWER": {"IN": ["fake", "staged", "ghost", "exaggerated"]}}],
+                        [{"LOWER": "quick"}, {"LOWER": "cash"}],
+                        [{"ENT_TYPE": "DATE"}, {"LOWER": "injury"}],
+                    ],
+                )
                 logger.debug("✅ spaCy matcher patterns initialized.")
 
         except Exception as e:
-            logger.error(f"❌ Error loading NLP models: {e}")
+            logger.error(f"❌ NLP model loading error: {e}")
+
 
 # =========================================================
-# 🔍 Text Analysis Function
+# 🔍 Core Text Analysis
 # =========================================================
 def analyze_text(text: str, past_texts: Optional[List[str]] = None) -> Dict[str, Any]:
     """
-    Analyze claim notes for fraud indicators.
+    Analyze claim notes for fraud-related indicators.
+
+    Args:
+        text (str): Claim notes or description.
+        past_texts (List[str], optional): Previous claims for similarity check.
+
+    Returns:
+        Dict[str, Any]: Extracted fraud-related NLP signals.
     """
     if not text or not text.strip():
         return {
@@ -79,48 +90,49 @@ def analyze_text(text: str, past_texts: Optional[List[str]] = None) -> Dict[str,
             "keyword_count": 0,
             "similarity_scores": [],
             "sentiment": 0.0,
-            "is_suspicious": False
+            "is_suspicious": False,
         }
 
     load_nlp_models()
+
+    # Cache lookup
     cache_key = f"nlp:{hash(text)}"
     cached = cache_get(cache_key)
     if cached:
         logger.debug("🧠 Cache hit for text analysis.")
         return cached
 
-    # spaCy processing
     doc = _nlp(text.lower())
 
-    # 1️⃣ Suspicious phrases
+    # 1️⃣ Suspicious phrase detection
     suspicious_phrases = [kw for kw in SUSPICIOUS_PHRASES if kw in text.lower()]
-    for match_id, start, end in _matcher(doc):
+    for _, start, end in _matcher(doc):
         phrase = doc[start:end].text
         if phrase not in suspicious_phrases:
             suspicious_phrases.append(phrase)
     keyword_count = len(suspicious_phrases)
 
-    # 2️⃣ Entity extraction
+    # 2️⃣ Entity extraction (NER)
     entities: Dict[str, List[str]] = {}
     for ent in doc.ents:
         entities.setdefault(ent.label_, []).append(ent.text)
 
-    # Add money pattern
-    money_matches = re.findall(r'\$?\d{1,3}(?:,\d{3})*(?:\.\d{2})?', text)
+    # Add monetary pattern manually
+    money_matches = re.findall(r"\$?\d{1,3}(?:,\d{3})*(?:\.\d{2})?", text)
     if money_matches:
         entities.setdefault("MONEY", []).extend(money_matches)
 
-    # 3️⃣ Similarity detection (duplicate check)
+    # 3️⃣ Semantic similarity (duplicate claims)
     similarity_scores = []
     max_similarity = 0.0
     if past_texts and _model:
         try:
-            query_embedding = _model.encode(text)
+            query_emb = _model.encode(text)
             for prev in past_texts:
                 if not prev.strip():
                     continue
                 prev_emb = _model.encode(prev)
-                sim = util.cos_sim(query_embedding, prev_emb)[0][0].item()
+                sim = util.cos_sim(query_emb, prev_emb)[0][0].item()
                 similarity_scores.append(round(sim, 3))
             max_similarity = max(similarity_scores) if similarity_scores else 0.0
         except Exception as e:
@@ -129,10 +141,10 @@ def analyze_text(text: str, past_texts: Optional[List[str]] = None) -> Dict[str,
     # 4️⃣ Sentiment analysis
     sentiment = TextBlob(text).sentiment.polarity
 
-    # 5️⃣ Determine suspiciousness
+    # 5️⃣ Suspicion scoring
     is_suspicious = (
         keyword_count > 0
-        or max_similarity > config.SIMILARITY_THRESHOLD
+        or max_similarity > getattr(config, "SIMILARITY_THRESHOLD", 0.85)
         or sentiment < -0.5
     )
 
@@ -147,12 +159,16 @@ def analyze_text(text: str, past_texts: Optional[List[str]] = None) -> Dict[str,
         "text_length": len(text),
     }
 
+    # Cache result (30 min)
     cache_set(cache_key, result, expire_seconds=1800)
-    logger.debug(f"🧩 NLP Analysis: {keyword_count} keywords, sim={max_similarity:.2f}, sent={sentiment:.2f}")
+    logger.debug(
+        f"🧩 NLP Analysis: {keyword_count} keywords, sim={max_similarity:.2f}, sent={sentiment:.2f}"
+    )
     return result
 
+
 # =========================================================
-# 🔗 Similarity Utility
+# 🔗 Utility: Text Similarity
 # =========================================================
 def get_text_similarity(text1: str, text2: str) -> float:
     """Compute cosine similarity between two texts (0–1)."""
@@ -164,15 +180,16 @@ def get_text_similarity(text1: str, text2: str) -> float:
         emb2 = _model.encode(text2)
         return float(util.cos_sim(emb1, emb2)[0][0])
     except Exception as e:
-        logger.warning(f"⚠️ Similarity computation error: {e}")
+        logger.warning(f"⚠️ Text similarity computation error: {e}")
         return 0.0
 
+
 # =========================================================
-# 🧪 Local Test
+# 🧪 Manual Test
 # =========================================================
 if __name__ == "__main__":
-    test_text = "I had a staged accident to get quick cash. Injury on 2023-10-01. Amount $15000."
-    prev_texts = ["Genuine accident on 2023-09-01 with Dr. Smith, $5000."]
-    results = analyze_text(test_text, prev_texts)
+    sample_text = "I had a staged accident to get quick cash. Injury on 2023-10-01. Amount $15000."
+    previous_texts = ["Genuine accident in 2023-09-01 with Dr. Smith, $5000."]
+    results = analyze_text(sample_text, previous_texts)
     print("Results:\n", results)
-    print("\nSimilarity:", get_text_similarity(test_text, prev_texts[0]))
+    print("\nSimilarity:", get_text_similarity(sample_text, previous_texts[0]))

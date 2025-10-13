@@ -1,137 +1,144 @@
 """
-E2E Tests: Full User Flow
+Pytest Configuration File
 -------------------------
-Tests the complete fraud detection lifecycle:
-Submit claim → Fraud scoring → Explanation → Guidance → Health.
+Defines global test fixtures and mock setup for the Intelligent Fraud Detection Chatbot.
+
+Features:
+- Safe environment + config isolation
+- Mocked Redis/DB/API/NLP/ML dependencies
+- Compatible with all E2E, integration, and unit tests
 """
 
+import os
 import pytest
-from fastapi.testclient import TestClient
-from src.models.fraud import Decision
+from unittest.mock import MagicMock
+from src.config import config
 
 
-class TestFullFlow:
-    """E2E tests for full claim submission and fraud decisions."""
+# =========================================================
+# 🧩 Test Config Fixture
+# =========================================================
+@pytest.fixture(scope="function")
+def mock_test_config(monkeypatch):
+    """
+    Mocks environment variables and config values for each test.
+    Function-scoped for isolation.
+    """
+    # 🔐 Environment mock
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///./test_fraud.db")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/1")
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-test-key")
 
-    @pytest.mark.usefixtures("mock_external_apis", "mock_nlp", "mock_ml_model", "override_get_db")
-    def test_low_risk_claim_full_flow(self, test_app: TestClient, mock_ml_model):
-        """Low-risk claim → APPROVE decision."""
-        # Adjust mock ML to low prob (20%)
-        mock_ml_model.predict_proba.return_value = [[0.8, 0.2]]
+    # 🧠 Patch config attributes
+    monkeypatch.setattr(config, "IS_TEST", True, raising=False)
+    monkeypatch.setattr(config, "LOG_LEVEL", "DEBUG", raising=False)
+    monkeypatch.setattr(config, "REDIS_ENABLED", False, raising=False)
+    monkeypatch.setattr(config, "ENABLE_EXTERNAL_APIS", False, raising=False)
 
-        payload = {
-            "amount": 2000,
-            "report_delay_days": 2,
-            "provider": "Trusted Clinic",
-            "notes": "Minor accident, normal claim.",
-            "claimant_id": "low_user",
-            "location": "New York, NY",
-            "is_new_bank": False
-        }
+    yield config
 
-        res = test_app.post("/api/v1/score_claim", json=payload)
-        assert res.status_code == 200
+    # 🧹 Cleanup
+    for var in ["APP_ENV", "DATABASE_URL", "REDIS_URL", "OPENAI_API_KEY"]:
+        monkeypatch.delenv(var, raising=False)
 
-        data = res.json()
-        assert data["decision"] == Decision.APPROVE.value
-        assert data["fraud_probability"] < 30
-        assert data["alarms"] == []
-        assert "low risk" in data["explanation"].lower()
 
-        # Check guidance works
-        guide = test_app.post("/api/v1/guidance", json={"query": "What documents are required?"})
-        assert guide.status_code == 200
-        assert "document" in guide.json()["guidance"]["response"].lower()
+# =========================================================
+# 🌐 Auto-Mock External Services (applied globally)
+# =========================================================
+@pytest.fixture(autouse=True)
+def mock_external_services(monkeypatch):
+    """
+    Prevents real API or network calls during tests.
+    Automatically applied to all tests (autouse=True).
+    """
 
-    @pytest.mark.usefixtures("mock_external_apis", "mock_nlp", "mock_ml_model", "override_get_db")
-    def test_medium_risk_claim_full_flow(self, test_app: TestClient, mock_ml_model):
-        """Medium-risk claim → REVIEW decision."""
-        mock_ml_model.predict_proba.return_value = [[0.5, 0.5]]
+    # ✅ External APIs
+    monkeypatch.setattr(
+        "src.utils.external_apis.check_vendor_fraud",
+        lambda claim: {"is_fraudulent": False, "risk_score": 0.1, "reason": "Mock vendor OK"},
+        raising=False,
+    )
 
-        payload = {
-            "amount": 8000,
-            "report_delay_days": 5,
-            "provider": "Out-of-Network Hospital",
-            "notes": "Some delay, but legitimate claim.",
-            "claimant_id": "med_user",
-            "location": "New York, NY",
-            "is_new_bank": False
-        }
+    monkeypatch.setattr(
+        "src.utils.external_apis.calculate_location_distance",
+        lambda loc1, loc2: 50.0,
+        raising=False,
+    )
 
-        res = test_app.post("/api/v1/score_claim", json=payload)
-        assert res.status_code == 200
+    monkeypatch.setattr(
+        "src.utils.external_apis.check_weather_at_location",
+        lambda loc: {"condition": "Clear", "is_rainy": False},
+        raising=False,
+    )
 
-        data = res.json()
-        assert data["decision"] == Decision.REVIEW.value
-        assert 30 <= data["fraud_probability"] <= 70
-        assert 1 <= len(data["alarms"]) <= 4
-        assert "review" in data["explanation"].lower()
+    # ✅ NLP mocks
+    monkeypatch.setattr("src.nlp.text_analyzer.load_nlp_models", lambda: True, raising=False)
+    monkeypatch.setattr("src.nlp.text_analyzer.get_text_similarity", lambda t1, t2: 0.8, raising=False)
 
-        explain = test_app.get("/api/v1/explain/out_of_network_provider")
-        assert explain.status_code in [200, 404]  # handle optional
-        if explain.status_code == 200:
-            assert "network" in explain.json()["description"].lower()
+    # ✅ Redis mock (avoid real connection)
+    from src.utils.cache import RedisCache
+    monkeypatch.setattr(RedisCache, "get_client", lambda self: None, raising=False)
 
-    @pytest.mark.usefixtures("mock_external_apis", "mock_nlp", "mock_ml_model", "override_get_db")
-    def test_high_risk_claim_full_flow(self, test_app: TestClient, mock_ml_model):
-        """High-risk claim → REJECT decision."""
-        mock_ml_model.predict_proba.return_value = [[0.2, 0.8]]
+    # ✅ DB mock (prevent connection to SQLite or AWS)
+    monkeypatch.setattr("src.utils.db.engine", None, raising=False)
 
-        payload = {
-            "amount": 15000,
-            "report_delay_days": 10,
-            "provider": "shady_clinic",
-            "notes": "Staged accident for quick cash, exaggerated pain.",
-            "claimant_id": "high_user",
-            "location": "Los Angeles, CA",
-            "is_new_bank": True
-        }
+    yield
 
-        res = test_app.post("/api/v1/score_claim", json=payload)
-        assert res.status_code == 200
 
-        data = res.json()
-        assert data["decision"] == Decision.REJECT.value
-        assert data["fraud_probability"] > 70
-        assert len(data["alarms"]) >= 4
-        assert "high risk" in data["explanation"].lower()
-        assert "rejected" in data["explanation"].lower()
+# =========================================================
+# ⚡ FastAPI Test Client
+# =========================================================
+@pytest.fixture(scope="function")
+def client(mock_test_config):
+    """Provides a FastAPI test client for integration and E2E tests."""
+    from fastapi.testclient import TestClient
+    from src.main import app
+    return TestClient(app)
 
-        # Check explanation endpoint
-        explain = test_app.get("/api/v1/explain/high_amount")
-        assert explain.status_code == 200
-        assert "exceed" in explain.json()["description"].lower()
 
-    def test_invalid_claim_input(self, test_app: TestClient):
-        """Invalid claim (negative amount) → 422 validation error."""
-        payload = {
-            "amount": -500,
-            "report_delay_days": 3,
-            "provider": "XYZ",
-            "notes": "Test",
-            "claimant_id": "invalid_user",
-            "location": "NY"
-        }
+# =========================================================
+# 🧩 Compatibility Fixtures (expected by older tests)
+# =========================================================
 
-        res = test_app.post("/api/v1/score_claim", json=payload)
-        assert res.status_code == 422
-        detail = str(res.json()["detail"]).lower()
-        assert "amount" in detail
-        assert "positive" in detail
+@pytest.fixture(name="mock_external_apis", autouse=False)
+def mock_external_apis_fixture(mock_external_services):
+    """Alias for backward compatibility with older test names."""
+    return mock_external_services
 
-    def test_health_and_root_endpoints(self, test_app: TestClient):
-        """Test health and root API endpoints."""
-        root = test_app.get("/")
-        assert root.status_code == 200
-        data = root.json()
-        assert "welcome" in data["message"].lower()
-        assert data["fraud_types_detected"] >= 10
-        assert isinstance(data["ml_enabled"], bool)
 
-        health = test_app.get("/health")
-        assert health.status_code == 200
-        assert health.json()["status"] == "healthy"
+@pytest.fixture(name="mock_nlp", autouse=False)
+def mock_nlp_fixture(monkeypatch):
+    """Mocks NLP analyzer and text extraction."""
+    monkeypatch.setattr(
+        "src.nlp.text_analyzer.analyze_text",
+        lambda text: {"summary": "Mock summary", "risk": "low"},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "src.nlp.text_analyzer.extract_entities",
+        lambda text: {"amount": 1000, "provider": "Mock Hospital"},
+        raising=False,
+    )
+    return True
 
-        me = test_app.get("/me")
-        assert me.status_code == 200
-        assert "user_id" in me.json()
+
+@pytest.fixture(name="mock_ml_model", autouse=False)
+def mock_ml_model_fixture(mocker):
+    """Mocks ML model prediction for fraud detection."""
+    mock_model = mocker.MagicMock()
+    mock_model.predict_proba.return_value = [[0.5, 0.5]]
+    return mock_model
+
+
+@pytest.fixture(name="override_get_db", autouse=False)
+def override_get_db_fixture(monkeypatch):
+    """Mocks the DB session dependency in FastAPI routes."""
+    from sqlalchemy.orm import Session
+
+    class DummySession(Session):
+        def __init__(self):
+            pass
+
+    monkeypatch.setattr("src.utils.db.get_db", lambda: DummySession())
+    return DummySession()

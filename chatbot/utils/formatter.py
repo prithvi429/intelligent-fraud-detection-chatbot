@@ -1,136 +1,135 @@
 """
-Response Formatter
-------------------
-Formats agent/tool outputs for user-friendly display.
-- Converts raw model or API outputs into clean Markdown.
-- Adds emojis, headings, and structured bullet points.
-- Handles multiple response types: fraud, guidance, explain, general.
-- Optionally trims overly long responses for concise chat UIs.
+Formatter Utility
+-----------------
+Centralized output formatting for chatbot messages and tool responses.
+
+Features:
+- Cleans and beautifies chatbot responses (Markdown, JSON, plain text)
+- Ensures consistent structure across all modules
+- Prevents overly long or malformed outputs
+- Backward-compatible with old function names
 
 Usage:
-    formatted = format_chat_response(raw_output, response_type="fraud", data=response_dict)
+    from chatbot.utils.formatter import format_chat_response, format_tool_output
 """
 
-from typing import Dict, Any, Optional
+import json
+import re
+from typing import Any, Dict, Union
 
-# Visual emoji mappings
-ALARM_EMOJIS = {
-    "high": "🚨",
-    "medium": "⚠️",
-    "low": "ℹ️"
-}
 
-DECISION_EMOJIS = {
-    "approve": "✅",
-    "review": "🔍",
-    "reject": "❌"
-}
+# =========================================================
+# 🧠 Helper — Clean Markdown / Text Output
+# =========================================================
+def _clean_text(text: str) -> str:
+    """Basic text cleaner: removes excessive whitespace and broken lines."""
+    text = re.sub(r"\s+", " ", text).strip()
+    text = text.replace(" .", ".").replace(" ,", ",")
+    return text
 
-def format_chat_response(
-    raw_output: str,
-    response_type: str = "general",
-    data: Optional[Dict[str, Any]] = None,
-    max_length: int = 500
-) -> str:
+
+# =========================================================
+# 💬 Chat Response Formatter
+# =========================================================
+def format_chat_response(response: Union[str, Dict[str, Any]]) -> str:
     """
-    Format a chatbot or tool response with rich Markdown.
+    Format chatbot responses for display (Markdown or plain text).
+
     Args:
-        raw_output: Raw LLM or tool text.
-        response_type: One of ["fraud", "guidance", "explain", "general"].
-        data: Optional structured data (alarms, probability, etc.).
-        max_length: Character limit for UI display (truncate if longer).
+        response (str | dict): The chatbot's generated text or structured output.
+
     Returns:
-        str: Markdown-formatted string ready for UI.
+        str: Clean, readable string formatted for chat UI.
     """
-    if not raw_output:
-        return "⚠️ No response received."
+    try:
+        if response is None:
+            return "⚠️ No response generated."
 
-    # Route based on type
-    response_type = response_type.lower().strip()
-    if response_type == "fraud":
-        formatted = _format_fraud_response(raw_output, data)
-    elif response_type == "guidance":
-        formatted = _format_guidance_response(raw_output, data)
-    elif response_type == "explain":
-        formatted = _format_explain_response(raw_output, data)
-    else:
-        formatted = f"🤖 {raw_output.strip()}"
+        # If dict or structured data → JSON pretty-print
+        if isinstance(response, (dict, list)):
+            return "```json\n" + json.dumps(response, indent=2, ensure_ascii=False) + "\n```"
 
-    # Trim overly long outputs for chat display
-    if len(formatted) > max_length:
-        formatted = formatted[:max_length].rsplit("\n", 1)[0] + "\n\n*(trimmed for readability...)*"
+        response = str(response).strip()
 
-    return formatted
+        # Clean weird tokens (e.g., LangChain artifacts)
+        response = re.sub(r"(?i)Observation:|Thought:|Action:|Final Answer:", "", response)
+        response = re.sub(r"```(json|python|markdown)?", "```", response)
+        response = _clean_text(response)
 
+        # Limit message length
+        if len(response) > 5000:
+            response = response[:5000] + "\n\n... ✂️ (truncated for display)"
 
-# --------------------------------------------------------------------
-# 🧠 Fraud Response Formatter
-# --------------------------------------------------------------------
-def _format_fraud_response(raw: str, data: Optional[Dict] = None) -> str:
-    """Format fraud detection results (decision, alarms, explanation)."""
-    if not isinstance(data, dict):
-        data = {}
+        return response
 
-    prob = float(data.get("probability", 0))
-    decision = str(data.get("decision", "Review")).title()
-    alarms = data.get("alarms", [])
-
-    decision_emoji = DECISION_EMOJIS.get(decision.lower(), "❓")
-    formatted = f"{decision_emoji} **{decision}** — Fraud Probability: **{prob:.1f}%**\n\n"
-
-    if alarms:
-        formatted += "🚨 **Detected Alarms:**\n"
-        for alarm in alarms[:5]:  # Limit to 5 alarms for brevity
-            severity = alarm.get("severity", "medium").lower()
-            alarm_emoji = ALARM_EMOJIS.get(severity, "⚠️")
-            alarm_type = alarm.get("type", "Unknown").title()
-            desc = alarm.get("description", "")
-            formatted += f"{alarm_emoji} **{alarm_type}** ({severity}): {desc}\n"
-
-        if len(alarms) > 5:
-            formatted += f"...and {len(alarms) - 5} more.\n"
-    else:
-        formatted += "✅ No alarms triggered.\n"
-
-    formatted += f"\n🧾 **Explanation:** {raw.strip()}"
-    return formatted
+    except Exception as e:
+        return f"⚠️ Error while formatting response: {e}"
 
 
-# --------------------------------------------------------------------
-# 📘 Guidance Response Formatter
-# --------------------------------------------------------------------
-def _format_guidance_response(raw: str, data: Optional[Dict] = None) -> str:
-    """Format policy guidance or documentation lookup response."""
-    if not isinstance(data, dict):
-        data = {}
+# =========================================================
+# 🧰 Tool Output Formatter
+# =========================================================
+def format_tool_output(output: Any) -> str:
+    """
+    Format raw tool outputs (like API calls, RAG results, or fraud analysis).
 
-    score = float(data.get("relevance_score", 0))
-    docs = data.get("required_docs", [])
+    Args:
+        output (Any): Raw tool result (dict, str, etc.)
 
-    formatted = f"📖 **Policy Guidance**\n\n{raw.strip()}\n\n"
-    if docs:
-        formatted += "**📋 Required Documents:**\n"
-        for doc in docs:
-            formatted += f"- {doc}\n"
+    Returns:
+        str: Human-readable formatted version (Markdown or JSON)
+    """
+    try:
+        if output is None:
+            return "⚠️ Tool returned no output."
 
-    formatted += f"\n📊 **Confidence:** {score:.1%} (match quality)"
-    return formatted
+        # JSON or dict-like structure
+        if isinstance(output, (dict, list)):
+            return "```json\n" + json.dumps(output, indent=2, ensure_ascii=False) + "\n```"
+
+        # Convert to string
+        text_output = str(output).strip()
+
+        # Clean unnecessary newlines / whitespace
+        text_output = re.sub(r"\n{3,}", "\n\n", text_output)
+        text_output = _clean_text(text_output)
+
+        # Truncate very long text (to avoid flooding)
+        if len(text_output) > 4000:
+            text_output = text_output[:4000] + "\n\n... ✂️ (output truncated)"
+
+        return text_output
+
+    except Exception as e:
+        return f"⚠️ Error while formatting tool output: {e}"
 
 
-# --------------------------------------------------------------------
-# 💡 Explain Alarm Formatter
-# --------------------------------------------------------------------
-def _format_explain_response(raw: str, data: Optional[Dict] = None) -> str:
-    """Format alarm explanation (single alarm info)."""
-    if not isinstance(data, dict):
-        data = {}
+# =========================================================
+# 🔧 Optional Combined Formatter
+# =========================================================
+def format_combined_output(agent_response: str, tool_output: Any) -> str:
+    """
+    Combine both chatbot reasoning + tool response into one display block.
 
-    alarm_type = data.get("type", "Unknown")
-    severity = data.get("severity", "medium").lower()
-    emoji = ALARM_EMOJIS.get(severity, "⚠️")
+    Args:
+        agent_response (str): Chatbot’s thought or explanation.
+        tool_output (Any): Tool output or API result.
 
-    formatted = (
-        f"{emoji} **Alarm Explanation: {alarm_type.title()}** ({severity.upper()})\n\n"
-        f"{raw.strip()}"
-    )
-    return formatted
+    Returns:
+        str: Formatted Markdown block combining both.
+    """
+    formatted_agent = format_chat_response(agent_response)
+    formatted_tool = format_tool_output(tool_output)
+
+    return f"🧠 **Agent Reasoning:**\n\n{formatted_agent}\n\n📊 **Tool Output:**\n\n{formatted_tool}"
+
+
+# =========================================================
+# ✅ Summary
+# =========================================================
+# These are imported by other modules:
+# from chatbot.utils.formatter import format_chat_response, format_tool_output
+#
+# Example:
+# formatted = format_tool_output({"decision": "Reject", "probability": 92.5})
+# print(formatted)

@@ -9,7 +9,7 @@ How it works:
 - If similarity > threshold (e.g., 0.8), flags a duplicate alarm.
 
 Example output:
-["Duplicate claims: 85% text similarity to prior claim (threshold: 80%)"]
+["[DUPLICATE-CLAIM] 85% text similarity to prior claim (threshold: 80%)"]
 """
 
 from typing import List, Optional
@@ -35,15 +35,19 @@ def check_duplicate_claims(claim: ClaimData, db: Optional[Session] = None) -> Li
     alarms: List[str] = []
     notes = (claim.notes or "").strip()
 
+    # 🧩 Early exits
     if not notes:
-        logger.debug("[DUPLICATE-CHECK] No notes provided — skipping check.")
+        logger.debug("[DUPLICATE-CLAIM] No notes provided — skipping check.")
         return alarms
+
     if not db:
-        logger.debug("[DUPLICATE-CHECK] No DB connection — cannot fetch past claims.")
+        logger.debug("[DUPLICATE-CLAIM] No DB connection — cannot fetch past claims.")
         return alarms
 
     try:
-        # Fetch recent past claim notes (limit 5)
+        # =========================================================
+        # 🗄️ Fetch up to 5 past claims for same claimant
+        # =========================================================
         sql = text("""
             SELECT notes FROM claims
             WHERE claimant_id = :claimant_id
@@ -56,30 +60,37 @@ def check_duplicate_claims(claim: ClaimData, db: Optional[Session] = None) -> Li
         past_notes = [row[0].strip() for row in result.fetchall() if row[0] and row[0].strip()]
 
         if not past_notes:
-            logger.debug(f"[DUPLICATE-CHECK] No past notes found for {claim.claimant_id}.")
+            logger.debug(f"[DUPLICATE-CLAIM] No previous notes found for claimant '{claim.claimant_id}'.")
             return alarms
 
-        # Compute max similarity
+        # =========================================================
+        # 🔍 Compare note similarity
+        # =========================================================
         max_similarity = 0.0
         for past_note in past_notes:
-            sim = get_text_similarity(notes, past_note)
-            max_similarity = max(max_similarity, sim)
+            try:
+                sim = get_text_similarity(notes, past_note)
+                max_similarity = max(max_similarity, sim)
+            except Exception as e:
+                logger.warning(f"[DUPLICATE-CLAIM] Similarity check failed for claimant {claim.claimant_id}: {e}")
 
-        threshold = config.SIMILARITY_THRESHOLD
+        threshold = getattr(config, "SIMILARITY_THRESHOLD", 0.8)
         logger.debug(
-            f"[DUPLICATE-CHECK] Max similarity for {claim.claimant_id}: {max_similarity:.2f} "
-            f"(threshold: {threshold:.2f})"
+            f"[DUPLICATE-CLAIM] Max similarity={max_similarity:.2f} | Threshold={threshold:.2f}"
         )
 
+        # =========================================================
+        # 🚨 Flag duplicates
+        # =========================================================
         if max_similarity > threshold:
             alarms.append(
-                f"Duplicate claims: {max_similarity:.1%} text similarity to prior claim "
+                f"[DUPLICATE-CLAIM] {max_similarity:.1%} text similarity to prior claim "
                 f"(threshold: {threshold:.1%})."
             )
-            logger.info(f"[DUPLICATE-CHECK] 🚨 Duplicate alarm for {claim.claimant_id}: {max_similarity:.1%}")
+            logger.info(f"[DUPLICATE-CLAIM] 🚨 Duplicate detected for claimant '{claim.claimant_id}'.")
 
     except Exception as e:
-        logger.warning(f"[DUPLICATE-CHECK] Error during duplicate analysis for {claim.claimant_id}: {e}")
+        logger.error(f"[DUPLICATE-CLAIM] Error during duplicate analysis for {claim.claimant_id}: {e}")
 
     return alarms
 
@@ -90,12 +101,13 @@ def check_duplicate_claims(claim: ClaimData, db: Optional[Session] = None) -> Li
 if __name__ == "__main__":
     from src.models.claim import ClaimData
 
-    claim = ClaimData(
-        amount=5000,
-        provider="ABC Hospital",
+    dummy_claim = ClaimData(
+        amount=7500,
+        provider="CityCare Hospital",
         claimant_id="user_demo",
-        notes="Car accident on the highway, minor injury.",
-        location=""
+        notes="Car accident on highway, minor injury.",
+        location="LA"
     )
 
-    print("🚨 Alarms:", check_duplicate_claims(claim))
+    alarms = check_duplicate_claims(dummy_claim)
+    print("\n🚨 Duplicate Claim Alarms:", alarms)

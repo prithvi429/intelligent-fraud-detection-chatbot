@@ -8,7 +8,7 @@ Why:
 - Used as a rule-based signal for review or rejection.
 
 Returns:
-    List[str] – e.g., ["Repeat claimant: 4 claims in the last 12 months"]
+    List[str] – e.g., ["[REPEAT-CLAIM] 4 prior claims in the last 12 months"]
 """
 
 from typing import List, Optional
@@ -24,48 +24,56 @@ def check_repeat_claimant(claim: ClaimData, db: Optional[Session] = None) -> Lis
     Rule-based fraud detection: Repeat Claimant Check.
 
     Args:
-        claim (ClaimData): Claim input.
-        db (Session, optional): SQLAlchemy session.
+        claim (ClaimData): Claim input object.
+        db (Session, optional): SQLAlchemy session to query historical claims.
 
     Returns:
-        List[str]: Fraud alarms detected.
+        List[str]: Fraud alarm messages if threshold exceeded.
     """
     alarms: List[str] = []
+    claimant_id = getattr(claim, "claimant_id", "unknown")
 
+    # 🚫 If DB unavailable, skip rule
     if not db:
-        logger.debug("[REPEAT-CLAIM] No DB session provided – skipping check.")
+        logger.debug("[REPEAT-CLAIM] No DB session provided — skipping check.")
         return alarms
 
-    months = 12  # time window
+    months_window = 12
+    threshold = getattr(config, "REPEAT_CLAIM_THRESHOLD", 3)
+
     try:
-        # Portable SQL for PostgreSQL + SQLite
+        # ✅ Cross-compatible query (works in SQLite + PostgreSQL)
         sql = text("""
-            SELECT COUNT(*) FROM claims
+            SELECT COUNT(*) 
+            FROM claims
             WHERE claimant_id = :claimant_id
               AND (
-                created_at >= (
-                  CASE
-                    WHEN CURRENT_TIMESTAMP IS NOT NULL THEN CURRENT_TIMESTAMP - INTERVAL '12 months'
-                    ELSE datetime('now', '-12 months')
-                  END
-                )
-              )
+                    created_at >= DATE('now', :minus_window)
+                    OR created_at >= (CURRENT_TIMESTAMP - INTERVAL '12 months')
+                  )
         """)
-        result = db.execute(sql, {"claimant_id": claim.claimant_id})
-        count = int(result.scalar() or 0)
+        params = {"claimant_id": claimant_id, "minus_window": f"-{months_window} months"}
+        result = db.execute(sql, params)
+        claim_count = int(result.scalar() or 0)
 
-        logger.debug(f"[REPEAT-CLAIM] {claim.claimant_id} has {count} prior claims in last {months} months.")
+        logger.debug(f"[REPEAT-CLAIM] {claimant_id}: {claim_count} claims in last {months_window} months.")
 
-        # Apply rule threshold
-        if count >= config.REPEAT_CLAIM_THRESHOLD:
-            plural = "s" if count != 1 else ""
+        # 🚨 Trigger alarm if over threshold
+        if claim_count >= threshold:
+            plural = "s" if claim_count != 1 else ""
             alarms.append(
-                f"Repeat claimant: {count} prior claim{plural} in the last {months} months "
-                f"(threshold = {config.REPEAT_CLAIM_THRESHOLD})."
+                f"[REPEAT-CLAIM] {claim_count} prior claim{plural} in the last "
+                f"{months_window} months (threshold: {threshold})."
+            )
+            logger.info(
+                f"[REPEAT-CLAIM] 🚨 Repeat claimant detected — {claimant_id}: {claim_count} claims."
             )
 
     except Exception as e:
-        logger.warning(f"[REPEAT-CLAIM] DB query failed for {claim.claimant_id}: {e}")
+        logger.warning(f"[REPEAT-CLAIM] ⚠️ DB query failed for {claimant_id}: {e}")
+
+    if not alarms:
+        logger.debug(f"[REPEAT-CLAIM] ✅ Claimant {claimant_id} has no suspicious claim frequency.")
 
     return alarms
 
@@ -86,4 +94,6 @@ if __name__ == "__main__":
 
     with SessionLocal() as db:
         alarms = check_repeat_claimant(test_claim, db)
-        print("🚨 Alarms:", alarms)
+        print("\n🚨 Repeat Claimant Alarms:")
+        for alarm in alarms:
+            print("•", alarm)
