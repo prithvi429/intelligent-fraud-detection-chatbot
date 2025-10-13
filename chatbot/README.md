@@ -8,4 +8,5 @@ Structure:
 - prompts/: system and user prompt templates
 - utils/: session manager and formatting helpers
 
-Run tests with `pytest chatbot/tests`.
+Run tests with `pytest chatbot/tests`
+
