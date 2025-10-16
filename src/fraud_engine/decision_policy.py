@@ -17,8 +17,7 @@ from src.models.fraud import Decision, FraudAlarm, AlarmSeverity
 from src.config import config
 from src.utils.logger import logger
 
-
-# Tunable thresholds (these can also be moved into config or DB table)
+# Tunable thresholds (can be moved into config or DB)
 THRESHOLD_APPROVE = 0.30   # <30% = approve
 THRESHOLD_REVIEW = 0.70    # 30–70% = manual review
 ALARM_WEIGHT = 0.10        # Each alarm adds 10%
@@ -56,16 +55,16 @@ def get_decision(
     num_alarms = len(alarms)
     high_count = len([a for a in alarms if a.severity == AlarmSeverity.HIGH])
 
-    # Decision logic
-    if total_risk < THRESHOLD_APPROVE or (num_alarms == 0 and fraud_prob < 20):
-        decision = Decision.APPROVE
-        reason = "Low risk: minimal alarms and low model confidence."
-    elif total_risk < THRESHOLD_REVIEW or num_alarms <= 3:
+    # ✅ Updated Decision Logic
+    if fraud_prob >= 75 or high_count >= 2 or total_risk >= 1.2:
+        decision = Decision.REJECT
+        reason = "High risk: multiple or severe alarms + high fraud probability."
+    elif fraud_prob >= 30 or num_alarms > 0:
         decision = Decision.REVIEW
         reason = "Medium risk: moderate alarms or uncertain ML confidence."
     else:
-        decision = Decision.REJECT
-        reason = "High risk: multiple or severe alarms + high probability."
+        decision = Decision.APPROVE
+        reason = "Low risk: minimal alarms and low probability."
 
     # Structured log for traceability
     log_data = {
@@ -93,12 +92,11 @@ def get_decision(
     return decision
 
 
-# Simple heuristic fallback (for lightweight mode)
 def get_simple_decision(fraud_prob: float, num_alarms: int) -> Decision:
-    """Basic version for testing or low-resource environments."""
+    """Basic version for lightweight or unit testing scenarios."""
     if fraud_prob < 30 and num_alarms == 0:
         return Decision.APPROVE
-    elif fraud_prob < 70 or num_alarms <= 3:
+    elif fraud_prob < 70 or num_alarms <= 2:
         return Decision.REVIEW
     return Decision.REJECT
 

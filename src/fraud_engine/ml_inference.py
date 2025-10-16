@@ -8,7 +8,7 @@ ML Inference for Fraud Probability
 Supports fallback scoring if model unavailable.
 
 Feature vector (14):
-amount, delay_days, is_new_bank, is_out_network, num_alarms,
+amount_normalized, delay_days, is_new_bank, is_out_network, num_alarms,
 high_alarm_count, repeat_count, similarity, distance,
 time_anomaly, keyword_count, sentiment, vendor_risk, external_mismatch.
 """
@@ -27,6 +27,7 @@ from src.utils.logger import logger
 from src.utils.external_apis import calculate_location_distance
 from src.nlp.text_analyzer import analyze_text
 
+
 # =========================================================
 # 🔧 Global State
 # =========================================================
@@ -38,9 +39,7 @@ is_model_loaded = False
 # 🚀 Model Loading
 # =========================================================
 def load_fraud_model(model_path: Optional[str] = None) -> bool:
-    """
-    Loads trained fraud model (.pkl). Falls back if unavailable.
-    """
+    """Loads trained fraud model (.pkl). Falls back if unavailable."""
     global model, is_model_loaded
     path = model_path or getattr(config, "FRAUD_MODEL_PATH", "ml/fraud_model.pkl")
 
@@ -69,9 +68,7 @@ def _fallback_prob(alarms: List) -> float:
 
 
 def get_fraud_probability(features_array: np.ndarray, alarms: list, db: Optional[Session] = None) -> float:
-    """
-    Predict fraud probability using ML model or fallback if unavailable.
-    """
+    """Predict fraud probability using ML model or fallback if unavailable."""
     global model, is_model_loaded
 
     if not is_model_loaded or model is None:
@@ -99,8 +96,8 @@ def extract_features(claim: ClaimData, alarms: list, db: Optional[Session] = Non
         # --- Base claim attributes ---
         amount_norm = round((claim.amount or 0) / 5000.0, 2)
         delay_days = getattr(claim, "report_delay_days", 0)
-        is_new_bank = int(getattr(claim, "is_new_bank", False))
-        is_out_network = int("out-of-network" in (claim.provider or "").lower())
+        is_new_bank = bool(getattr(claim, "is_new_bank", False))
+        is_out_network = bool("out-of-network" in (claim.provider or "").lower())
 
         # --- Alarms summary ---
         num_alarms = len(alarms)
@@ -127,32 +124,56 @@ def extract_features(claim: ClaimData, alarms: list, db: Optional[Session] = Non
 
         # --- Rule-derived anomaly indicators ---
         time_anomaly = int(any("time pattern" in str(a).lower() for a in alarms))
-        vendor_risk = int(any("vendor fraud" in str(a).lower() for a in alarms))
+        vendor_risk = float(any("vendor fraud" in str(a).lower() for a in alarms))
         external_mismatch = int(any("external mismatch" in str(a).lower() for a in alarms))
 
-        # --- Combine into feature vector ---
-        features = [
-            amount_norm, delay_days, is_new_bank, is_out_network,
-            num_alarms, high_alarm_count, repeat_count, similarity,
-            distance, time_anomaly, keyword_count, sentiment,
-            vendor_risk, external_mismatch
-        ]
+        # ✅ Return structured FraudFeatures object
+        features = FraudFeatures(
+            amount_normalized=amount_norm,
+            delay_days=delay_days,
+            is_new_bank=is_new_bank,
+            is_out_of_network=is_out_network,
+            num_alarms=num_alarms,
+            high_severity_count=high_alarm_count,
+            repeat_count=repeat_count,
+            text_similarity_score=similarity,
+            location_distance=distance,
+            time_anomaly_score=float(time_anomaly),
+            suspicious_keyword_count=keyword_count,
+            sentiment_score=sentiment,
+            vendor_risk_score=vendor_risk,
+            external_mismatch_count=external_mismatch,
+        )
 
-        logger.debug(f"[ML] Extracted features for {claim.claimant_id}: {features}")
-        return FraudFeatures(values=features)
+        logger.debug(f"[ML] ✅ Extracted features for {claim.claimant_id}: {features.model_dump()}")
+        return features
 
     except Exception as e:
         logger.error(f"[ML] ❌ Feature extraction failed for {claim.claimant_id}: {e}")
-        return FraudFeatures(values=[0.0] * 14)  # Fail-safe empty vector
+        # ✅ Return safe zeroed-out feature set
+        return FraudFeatures(
+            amount_normalized=0.0,
+            delay_days=0,
+            is_new_bank=False,
+            is_out_of_network=False,
+            num_alarms=0,
+            high_severity_count=0,
+            repeat_count=0,
+            text_similarity_score=0.0,
+            location_distance=0.0,
+            time_anomaly_score=0.0,
+            suspicious_keyword_count=0,
+            sentiment_score=0.0,
+            vendor_risk_score=0.0,
+            external_mismatch_count=0,
+        )
 
 
 # =========================================================
 # 🧪 Synthetic Model Trainer (for testing)
 # =========================================================
 def train_synthetic_model(save_path: str = "ml/fraud_model.pkl"):
-    """
-    Trains a simple RandomForestClassifier on synthetic data for testing environments.
-    """
+    """Trains a simple RandomForestClassifier on synthetic data for testing environments."""
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.model_selection import train_test_split
     from sklearn.metrics import roc_auc_score
@@ -161,7 +182,6 @@ def train_synthetic_model(save_path: str = "ml/fraud_model.pkl"):
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     logger.info("[ML] 🧩 Training synthetic fraud model...")
 
-    # Generate synthetic dataset
     n = 1000
     df = pd.DataFrame({
         "amount": np.random.rand(n) * 3,
@@ -207,7 +227,7 @@ if __name__ == "__main__":
     ]
 
     features = extract_features(claim, alarms)
-    features_array = np.array([features.values])
+    features_array = np.array([features.to_array()])  # ✅ to_array() method from FraudFeatures
 
     if not load_fraud_model():
         train_synthetic_model()

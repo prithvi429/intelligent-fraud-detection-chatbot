@@ -107,3 +107,5 @@ pydantic-settings>=2.4.0,<3.0.0
   # For BaseSettings (or use pydantic v2+)
 python-dotenv==1.0.1
      
+
+pytest-cov
